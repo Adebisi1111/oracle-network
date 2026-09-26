@@ -5,9 +5,9 @@ data feeds. Multiple oracles report values for a data request; a single
 AI consensus round determines the truthful value and slashes outliers.
 
 ```
-Contract address (Studio Net): <deployed_address>
-Deploy tx: <deploy_tx>
-Explorer: https://explorer-studio.genlayer.com/address/<deployed_address>
+Contract address (Studio Net): 0x5770887cE7A8f0620CE11042bb81317Ec302A206
+Deploy tx: 0x7c5cc242bf62748b6d87fe97be700d4c4a1b740aa7acad36b5b4947838a43a22
+Explorer: https://explorer-studio.genlayer.com/address/0x5770887cE7A8f0620CE11042bb81317Ec302A206
 ```
 
 ## What it does
