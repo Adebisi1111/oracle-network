@@ -41,55 +41,55 @@ from typing import Any
 from genlayer import *  # noqa: F401, F403
 
 
-@gl.allow_storage
+@allow_storage
 @dataclass
 class OracleRecord:
-    staked: gl.u256 = gl.u256(0)
-    reports_count: gl.u256 = gl.u256(0)
-    slashed_count: gl.u256 = gl.u256(0)
-    total_slashed: gl.u256 = gl.u256(0)
+    staked: u256 = u256(0)
+    reports_count: u256 = u256(0)
+    slashed_count: u256 = u256(0)
+    total_slashed: u256 = u256(0)
     active: bool = True
 
 
-@gl.allow_storage
+@allow_storage
 @dataclass
 class Report:
     oracle: str = ""
     request_id: str = ""
-    value: gl.u256 = gl.u256(0)
+    value: u256 = u256(0)
     source: str = ""
-    timestamp: gl.u256 = gl.u256(0)
+    timestamp: u256 = u256(0)
 
 
-@gl.allow_storage
+@allow_storage
 @dataclass
 class Request:
     requester: str = ""
     query: str = ""
-    sources: gl.DynArray[str] = field(default_factory=lambda: gl.DynArray[str]())
+    sources: DynArray[str] = field(default_factory=lambda: DynArray[str]())
     status: str = "PENDING"  # PENDING | RESOLVED | CANCELLED
-    result: gl.u256 = gl.u256(0)
-    reports_count: gl.u256 = gl.u256(0)
-    resolved_at: gl.u256 = gl.u256(0)
+    result: u256 = u256(0)
+    reports_count: u256 = u256(0)
+    resolved_at: u256 = u256(0)
 
 
 class OracleNetwork(gl.Contract):
     """Decentralized oracle network with AI-powered consensus."""
 
-    OUTLIER_THRESHOLD: gl.u256 = gl.u256(200)  # scaled by 100 (2.0)
+    OUTLIER_THRESHOLD: u256 = u256(200)  # scaled by 100 (2.0)
 
-    min_stake: gl.u256 = gl.u256(1000000000000000000)
-    slash_percent: gl.u256 = gl.u256(10)
-    outlier_threshold: gl.u256 = gl.u256(200)
+    min_stake: u256 = u256(1000000000000000000)
+    slash_percent: u256 = u256(10)
+    outlier_threshold: u256 = u256(200)
 
-    oracles: gl.TreeMap[str, OracleRecord]
-    requests: gl.TreeMap[str, Request]
-    reports: gl.TreeMap[str, Report]
+    oracles: TreeMap[str, OracleRecord]
+    requests: TreeMap[str, Request]
+    reports: TreeMap[str, Report]
 
     def __init__(self):
-        self.min_stake = gl.u256(1000000000000000000)
-        self.slash_percent = gl.u256(10)
-        self.outlier_threshold = gl.u256(200)
+        self.min_stake = u256(1000000000000000000)
+        self.slash_percent = u256(10)
+        self.outlier_threshold = u256(200)
 
     # ------------------------------------------------------------------
     # Oracle registration
@@ -117,7 +117,7 @@ class OracleNetwork(gl.Contract):
         self,
         request_id: str,
         query: str,
-        sources: gl.DynArray[str],
+        sources: DynArray[str],
     ) -> None:
         """Post a data request for oracles to fulfill."""
         sender = str(gl.message.sender_address)
@@ -136,7 +136,7 @@ class OracleNetwork(gl.Contract):
         )
 
     @gl.public.write
-    def report(self, request_id: str, value: gl.u256, source_url: str) -> None:
+    def report(self, request_id: str, value: u256, source_url: str) -> None:
         """Oracle reports a value for a request.
 
         Args:
@@ -165,10 +165,10 @@ class OracleNetwork(gl.Contract):
             request_id=request_id,
             value=value,
             source=source_url,
-            timestamp=gl.u256(self._now()),
+            timestamp=u256(self._now()),
         )
-        req.reports_count += gl.u256(1)
-        oracle.reports_count += gl.u256(1)
+        req.reports_count += u256(1)
+        oracle.reports_count += u256(1)
         self.requests[request_id] = req
         self.oracles[sender] = oracle
 
@@ -186,8 +186,8 @@ class OracleNetwork(gl.Contract):
 
         result = self._run_consensus(request_id)
         req.status = "RESOLVED"
-        req.result = gl.u256(int(result["median"]))
-        req.resolved_at = gl.u256(self._now())
+        req.result = u256(int(result["median"]))
+        req.resolved_at = u256(self._now())
         self.requests[request_id] = req
 
         return json.dumps(result)
@@ -261,12 +261,15 @@ class OracleNetwork(gl.Contract):
             variance = sum((v - mean) ** 2 for v in values) / n
             std_dev = math.sqrt(variance)
 
-            # Identify outliers
+            # Identify outliers — compare each report's AI-verified value against median
+            # of verified values, not the raw reported value. When std_dev is 0 (all
+            # verified values agree), there are no outliers.
             threshold = 2.0
             outliers = []
-            for r in all_reports:
-                if abs(float(r.value) - median) > threshold * std_dev:
-                    outliers.append(r.oracle)
+            if std_dev > 0:
+                for r, verified_val in zip(all_reports, verified_values):
+                    if abs(verified_val - median) > threshold * std_dev:
+                        outliers.append(r.oracle)
 
             return {
                 "median": median,
@@ -301,9 +304,9 @@ class OracleNetwork(gl.Contract):
         if rec is None or not rec.active:
             return
         slash_amount = int(rec.staked) * int(self.slash_percent) // 100
-        rec.staked -= gl.u256(slash_amount)
-        rec.slashed_count += gl.u256(1)
-        rec.total_slashed += gl.u256(slash_amount)
+        rec.staked -= u256(slash_amount)
+        rec.slashed_count += u256(1)
+        rec.total_slashed += u256(slash_amount)
         if int(rec.staked) < int(self.min_stake):
             rec.active = False
         self.oracles[oracle_addr] = rec

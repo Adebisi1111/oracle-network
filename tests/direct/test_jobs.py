@@ -72,12 +72,10 @@ def test_report_by_registered_oracle(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy("contracts/oracle_network.py")
     alice = to_hex(direct_alice)
 
-    # Register oracle
     direct_vm.sender = direct_alice
     direct_vm.value = 1000000000000000000
     contract.register()
 
-    # Post request
     direct_vm.sender = direct_alice
     contract.post_request(
         request_id="req1",
@@ -85,17 +83,20 @@ def test_report_by_registered_oracle(direct_vm, direct_deploy, direct_alice):
         sources=["https://coingecko.com"],
     )
 
-    # Report value (integer, scaled)
+    direct_vm.mock_web("coingecko", {"body": "ETH price data: $3500 per ETH"})
+    direct_vm.mock_llm(
+        ".*Does the source content support the reported value.*",
+        json.dumps({"verified_value": 3500, "supported": True}),
+    )
+
     contract.report("req1", 3500, "coingecko")
 
-    # Check report
     report = contract.get_report("req1", alice)
     data = json.loads(report)
     assert data["exists"] is True
     assert data["value"] == 3500
     assert data["source"] == "coingecko"
 
-    # Check request
     req = contract.get_request("req1")
     req_data = json.loads(req)
     assert req_data["reports_count"] == 1
@@ -126,8 +127,9 @@ def test_report_rejects_resolved_request(direct_vm, direct_deploy, direct_alice)
     contract = direct_deploy("contracts/oracle_network.py")
     alice = to_hex(direct_alice)
 
+    # Use 10 GEN stake so oracle survives 10% slash
     direct_vm.sender = direct_alice
-    direct_vm.value = 1000000000000000000
+    direct_vm.value = 10000000000000000000
     contract.register()
 
     direct_vm.sender = direct_alice
@@ -137,11 +139,15 @@ def test_report_rejects_resolved_request(direct_vm, direct_deploy, direct_alice)
         sources=["https://coingecko.com"],
     )
 
-    # Post 3 reports from same oracle
+    direct_vm.mock_web("coingecko", {"body": "ETH price data: $3500 per ETH"})
+    direct_vm.mock_llm(
+        ".*Does the source content support the reported value.*",
+        json.dumps({"verified_value": 3500, "supported": True}),
+    )
+
     contract.report("req1", 3500, "coingecko")
     contract.report("req1", 3501, "coingecko")
     contract.report("req1", 3499, "coingecko")
-
     contract.resolve("req1")
 
     try:
