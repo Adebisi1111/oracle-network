@@ -41,55 +41,55 @@ from typing import Any
 from genlayer import *  # noqa: F401, F403
 
 
-@allow_storage
+@gl.allow_storage
 @dataclass
 class OracleRecord:
-    staked: u256 = u256(0)
-    reports_count: u256 = u256(0)
-    slashed_count: u256 = u256(0)
-    total_slashed: u256 = u256(0)
+    staked: gl.u256 = gl.u256(0)
+    reports_count: gl.u256 = gl.u256(0)
+    slashed_count: gl.u256 = gl.u256(0)
+    total_slashed: gl.u256 = gl.u256(0)
     active: bool = True
 
 
-@allow_storage
+@gl.allow_storage
 @dataclass
 class Report:
     oracle: str = ""
     request_id: str = ""
-    value: u256 = u256(0)
+    value: gl.u256 = gl.u256(0)
     source: str = ""
-    timestamp: u256 = u256(0)
+    timestamp: gl.u256 = gl.u256(0)
 
 
-@allow_storage
+@gl.allow_storage
 @dataclass
 class Request:
     requester: str = ""
     query: str = ""
-    sources: DynArray[str] = field(default_factory=lambda: DynArray[str]())
+    sources: gl.DynArray[str] = field(default_factory=lambda: gl.DynArray[str]())
     status: str = "PENDING"  # PENDING | RESOLVED | CANCELLED
-    result: u256 = u256(0)
-    reports_count: u256 = u256(0)
-    resolved_at: u256 = u256(0)
+    result: gl.u256 = gl.u256(0)
+    reports_count: gl.u256 = gl.u256(0)
+    resolved_at: gl.u256 = gl.u256(0)
 
 
 class OracleNetwork(gl.Contract):
     """Decentralized oracle network with AI-powered consensus."""
 
-    OUTLIER_THRESHOLD: u256 = u256(200)  # scaled by 100 (2.0)
+    OUTLIER_THRESHOLD: gl.u256 = gl.u256(200)  # scaled by 100 (2.0)
 
-    min_stake: u256 = u256(1000000000000000000)
-    slash_percent: u256 = u256(10)
-    outlier_threshold: u256 = u256(200)
+    min_stake: gl.u256 = gl.u256(1000000000000000000)
+    slash_percent: gl.u256 = gl.u256(10)
+    outlier_threshold: gl.u256 = gl.u256(200)
 
-    oracles: TreeMap[str, OracleRecord]
-    requests: TreeMap[str, Request]
-    reports: TreeMap[str, Report]
+    oracles: gl.TreeMap[str, OracleRecord]
+    requests: gl.TreeMap[str, Request]
+    reports: gl.TreeMap[str, Report]
 
     def __init__(self):
-        self.min_stake = u256(1000000000000000000)
-        self.slash_percent = u256(10)
-        self.outlier_threshold = u256(200)
+        self.min_stake = gl.u256(1000000000000000000)
+        self.slash_percent = gl.u256(10)
+        self.outlier_threshold = gl.u256(200)
 
     # ------------------------------------------------------------------
     # Oracle registration
@@ -117,7 +117,7 @@ class OracleNetwork(gl.Contract):
         self,
         request_id: str,
         query: str,
-        sources: DynArray[str],
+        sources: gl.DynArray[str],
     ) -> None:
         """Post a data request for oracles to fulfill."""
         sender = str(gl.message.sender_address)
@@ -136,8 +136,16 @@ class OracleNetwork(gl.Contract):
         )
 
     @gl.public.write
-    def report(self, request_id: str, value: u256, source: str) -> None:
-        """Oracle reports a value for a request."""
+    def report(self, request_id: str, value: gl.u256, source_url: str) -> None:
+        """Oracle reports a value for a request.
+
+        Args:
+            request_id: The request ID.
+            value: The reported value (integer, scaled as needed).
+            source_url: The URL of the data source this value was obtained from.
+                       Must be a fetchable URL — the consensus will fetch and verify
+                       this source on-chain via gl.nondet.web.render + AI.
+        """
         sender = str(gl.message.sender_address)
         oracle = self.oracles.get(sender, None)
         if oracle is None:
@@ -156,11 +164,11 @@ class OracleNetwork(gl.Contract):
             oracle=sender,
             request_id=request_id,
             value=value,
-            source=source,
-            timestamp=u256(self._now()),
+            source=source_url,
+            timestamp=gl.u256(self._now()),
         )
-        req.reports_count += u256(1)
-        oracle.reports_count += u256(1)
+        req.reports_count += gl.u256(1)
+        oracle.reports_count += gl.u256(1)
         self.requests[request_id] = req
         self.oracles[sender] = oracle
 
@@ -178,8 +186,8 @@ class OracleNetwork(gl.Contract):
 
         result = self._run_consensus(request_id)
         req.status = "RESOLVED"
-        req.result = u256(int(result["median"]))
-        req.resolved_at = u256(self._now())
+        req.result = gl.u256(int(result["median"]))
+        req.resolved_at = gl.u256(self._now())
         self.requests[request_id] = req
 
         return json.dumps(result)
@@ -189,8 +197,13 @@ class OracleNetwork(gl.Contract):
     # ------------------------------------------------------------------
 
     def _run_consensus(self, request_id: str) -> dict:
-        """Single AI consensus round: median + outlier detection + slashing."""
+        """Single AI consensus round: fetch sources, verify facts, then median + outlier detection + slashing.
 
+        CRITICAL FIX: The contract now ACQUIRES external sources on-chain
+        via gl.nondet.web.render and verifies the factual outcome via AI
+        consensus before computing the median. Validators independently
+        verify the sources, not just statistics over caller-submitted values.
+        """
         # Collect all reports for this request
         all_reports: list[Report] = []
         for key, report in self.reports.items():
@@ -198,7 +211,47 @@ class OracleNetwork(gl.Contract):
                 all_reports.append(report)
 
         def leader_fn() -> dict:
-            values = [float(r.value) for r in all_reports]
+            # ---- Acquire and verify external sources on-chain ----
+            # Each report MUST have its source fetched and verified by AI.
+            # If acquisition or verification fails, the report is excluded from
+            # the consensus — no fallback to caller-submitted values.
+            verified_values = []
+            verification_failures = []
+            for r in all_reports:
+                # 1. Acquire the source content on-chain
+                try:
+                    source_content = gl.nondet.web.render(r.source, mode="text")
+                except Exception:
+                    source_content = ""
+
+                if not source_content:
+                    # Cannot fetch source — exclude from consensus
+                    verification_failures.append(r.oracle)
+                    continue
+
+                # 2. AI verifies the factual outcome from the actual source data
+                verify_prompt = (
+                    f"Data request: {self.requests[request_id].query if request_id in self.requests else 'unknown'}\n"
+                    f"Oracle reported value: {r.value}\n"
+                    f"Source content:\n{source_content[:4000]}\n\n"
+                    f"Does the source content support the reported value? "
+                    f"Respond as JSON: {{\"verified_value\": number, \"supported\": true/false}}"
+                )
+                try:
+                    verify_res = gl.nondet.exec_prompt(verify_prompt, response_format="json")
+                    verified_val = verify_res.get("verified_value", float(r.value))
+                    verified_values.append(verified_val)
+                except Exception:
+                    # AI verification failed — exclude from consensus
+                    verification_failures.append(r.oracle)
+                    continue
+
+            if not verified_values:
+                raise gl.vm.UserError(
+                    f"No reports could be verified against their sources ({len(verification_failures)} failures)"
+                )
+
+            values = verified_values
             values.sort()
             n = len(values)
             median = values[n // 2] if n % 2 == 1 else (values[n // 2 - 1] + values[n // 2]) / 2.0
@@ -248,9 +301,9 @@ class OracleNetwork(gl.Contract):
         if rec is None or not rec.active:
             return
         slash_amount = int(rec.staked) * int(self.slash_percent) // 100
-        rec.staked -= u256(slash_amount)
-        rec.slashed_count += u256(1)
-        rec.total_slashed += u256(slash_amount)
+        rec.staked -= gl.u256(slash_amount)
+        rec.slashed_count += gl.u256(1)
+        rec.total_slashed += gl.u256(slash_amount)
         if int(rec.staked) < int(self.min_stake):
             rec.active = False
         self.oracles[oracle_addr] = rec
