@@ -148,13 +148,31 @@ These are the properties the contract guarantees. Each has tests in
 | 5 | **Verified value stays bound to its oracle** | Consensus accumulates `{oracle, value, reported}` records and judges outliers from each record's own value. There is no positional `zip()` against the report list, so a dropped fetch cannot shift the slash target onto an innocent oracle. |
 | 6 | **Custody lifecycle** | Two-phase `request_withdraw()` → `claim_withdraw(nonce)` with a monotonic nonce. The reservation is zeroed before settlement, so a replay pays out once. `dispose_slashed()` moves burned stake to a network sink and never credits it back. |
 
-**On #6 — a stated limitation.** This runtime exposes no outbound value
-primitive on the contract base class: there is no `gl.pay()`, and
-`emit_transfer` lives on `ContractProxy` rather than `Contract`. The lifecycle
-is therefore enforced as *accounting* — `settled_withdrawals` and `slashed_sink`
-record what is owed and must be disbursed off-contract by the operator. The
-replay-resistance and below-minimum guarantees are real and on-chain; the
-actual transfer is not something the contract can perform here.
+**On #6 — what "custody lifecycle" can mean on this runtime.** Every safety
+property the steward asked for is enforced on-chain and tested: replay
+resistance, the below-minimum floor, single-settlement, and slashed value that
+is tracked rather than silently destroyed.
+
+What cannot be done *here* is move the GEN. That is a runtime limitation, and
+it was measured rather than assumed:
+
+```
+has_emit_transfer_attr: False
+has_emit_attr:          False
+self.emit_transfer -> AttributeError: 'TransferProbe' object has no attribute 'emit_transfer'
+self.emit           -> AttributeError: 'TransferProbe' object has no attribute 'emit'
+```
+
+`emit_transfer` exists in the SDK but only on `ContractProxy` — the handle you
+use to call *another* contract. The deployable base class (`gl.Contract`) has
+`balance` and `__receive__` for inbound value, and no outbound primitive. A
+contract can therefore hold and account for stake, but cannot pay it out from
+inside a transaction.
+
+So settlement is recorded in `settled_withdrawals` and `slashed_sink`, which
+are authoritative on-chain amounts owed to each oracle and must be disbursed
+off-contract by the network operator. The guard rails are real; the payout leg
+is an operational step.
 
 ## Testing
 
