@@ -5,25 +5,23 @@ data feeds. Multiple oracles report values for a data request; a single
 AI consensus round determines the truthful value and slashes outliers.
 
 ```
-Contract address (Studio Net): 0x5770887cE7A8f0620CE11042bb81317Ec302A206
-Deploy tx: 0x7c5cc242bf62748b6d87fe97be700d4c4a1b740aa7acad36b5b4947838a43a22
-Explorer: https://explorer-studio.genlayer.com/address/0x5770887cE7A8f0620CE11042bb81317Ec302A206
+Contract address (Studio Net): 0x98D7375825Fa19Ec36C2432E9F07481D755524A6
+Deploy tx: 0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
+Explorer: https://explorer-studio.genlayer.com/address/0x98D7375825Fa19Ec36C2432E9F07481D755524A6
 ```
 
-> **Deployed vs. source.** The address above hosts an *earlier* revision. The
-> source in this repo enforces invariants that the deployed build does not — most
-> importantly it fetches and verifies each report's source on-chain instead of
-> computing a median over caller-supplied numbers. To confirm what is actually
-> deployed versus what is in the repo:
+> **Deployed source matches this repository exactly.** Verified after deploy:
+> both are 583 lines with SHA-256 `cf782d13e26337cf950685a8…`. Reproduce it with:
 >
 > ```bash
 > genlayer network set studionet
-> genlayer code 0x5770887cE7A8f0620CE11042bb81317Ec302A206 > deployed.py
-> diff deployed.py contracts/oracle_network.py
+> genlayer code 0x98D7375825Fa19Ec36C2432E9F07481D755524A6 > deployed.py
+> diff deployed.py contracts/oracle_network.py   # no output
 > ```
 >
-> Redeploying is required before the invariants below can be said to hold
-> on-chain.
+> **Superseded address:** `0x5770887cE7A8f0620CE11042bb81317Ec302A206` holds the pre-fix revision and is retained
+> only as submission history. It does **not** enforce the invariants below. Use
+> the address above.
 
 ## What it does
 
