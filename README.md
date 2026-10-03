@@ -5,17 +5,17 @@ data feeds. Multiple oracles report values for a data request; a single
 AI consensus round determines the truthful value and slashes outliers.
 
 ```
-Contract address (Studio Net): 0x98D7375825Fa19Ec36C2432E9F07481D755524A6
+Contract address (Studio Net): 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A
 Deploy tx: 0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
-Explorer: https://explorer-studio.genlayer.com/address/0x98D7375825Fa19Ec36C2432E9F07481D755524A6
+Explorer: https://explorer-studio.genlayer.com/address/0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A
 ```
 
 > **Deployed source matches this repository exactly.** Verified after deploy:
-> both are 583 lines with SHA-256 `cf782d13e26337cf950685a8…`. Reproduce it with:
+> both are 595 lines with SHA-256 `27a05aa3cdc755083b1733bf…`. Reproduce it with:
 >
 > ```bash
 > genlayer network set studionet
-> genlayer code 0x98D7375825Fa19Ec36C2432E9F07481D755524A6 > deployed.py
+> genlayer code 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A > deployed.py
 > diff deployed.py contracts/oracle_network.py   # no output
 > ```
 >

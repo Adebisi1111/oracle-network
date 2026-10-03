@@ -349,14 +349,26 @@ class OracleNetwork(gl.Contract):
                     if abs(entry["value"] - median) > threshold * std_dev:
                         outliers.append(entry["oracle"])
 
+            # GenLayer's calldata encoder has no float type: returning a float
+            # here aborts consensus with
+            #   TypeError: not calldata encodable 88.0: float  (key 'median')
+            # which is why resolve() previously failed on-chain even though the
+            # arithmetic was correct. Every numeric value crossing the
+            # leader/validator boundary is therefore emitted as an integer.
+            # Outlier detection already ran above on full float precision, so
+            # truncating here only affects the reported values.
             return {
-                "median": median,
-                "std_dev": std_dev,
+                "median": int(median),
+                "std_dev": int(std_dev),
                 "outliers": outliers,
-                "values": values,
+                "values": [int(v) for v in values],
                 # Verified values with their originating oracles, so a reader can
                 # re-check who said what and see that the pairing is explicit.
-                "verified": verified,
+                # Integers only - see the encoding note above.
+                "verified": [
+                    {"oracle": e["oracle"], "value": int(e["value"]), "reported": int(e["reported"])}
+                    for e in verified
+                ],
                 "excluded": verification_failures,
             }
 

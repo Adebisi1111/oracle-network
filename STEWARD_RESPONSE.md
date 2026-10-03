@@ -91,18 +91,18 @@ operational.
 The corrected source is live on Studio Net (chain 61999):
 
 ```
-Contract address: 0x98D7375825Fa19Ec36C2432E9F07481D755524A6
+Contract address: 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A
 Deploy tx:        0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
-Explorer:         https://explorer-studio.genlayer.com/address/0x98D7375825Fa19Ec36C2432E9F07481D755524A6
+Explorer:         https://explorer-studio.genlayer.com/address/0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A
 ```
 
 Verified by retrieving the deployed source from the chain and comparing it to
-the file in this repository — both are 583 lines with SHA-256
-`cf782d13e26337cf950685a8…`, i.e. byte-identical:
+the file in this repository — both are 595 lines with SHA-256
+`27a05aa3cdc755083b1733bf…`, i.e. byte-identical:
 
 ```bash
 genlayer network set studionet
-genlayer code 0x98D7375825Fa19Ec36C2432E9F07481D755524A6 > deployed.py
+genlayer code 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A > deployed.py
 diff deployed.py contracts/oracle_network.py   # no output
 ```
 
@@ -123,3 +123,69 @@ the `genlayer deploy` CLI. `deployContract({ code })` takes the contract source
 which finalized as type-0 calls without creating a contract. The deploy script
 is checked in at `frontend/deploy-oracle.mjs`. This is recorded because it is
 the reproducible path.
+
+## Live end-to-end proof on Studio Net
+
+The invariants above are not only tested — they were exercised through real
+consensus transactions against the deployed contract.
+
+```
+Contract: 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A   (Studio Net, 61999)
+Harness:  frontend/e2e-oracle.mjs
+```
+
+Three funded oracles registered, then one request was opened, reported and
+resolved. Results, each confirmed against `consensus_data.execution_result` in
+the explorer rather than a transaction status:
+
+| Invariant | On-chain evidence |
+|---|---|
+| Min stake before activation | A 0.1 GEN `register` was **refused** with all five validators voting agree. A 3 GEN `register` returned `SUCCESS`. |
+| Unique oracle reports | `reports_count` reached exactly **3** from three distinct addresses, and a second `report` from an oracle that already reported was **refused**. |
+| Request-scoped source policy | A `report` citing a URL outside the request's declared sources was **refused**. |
+| Validated verified values | The source was fetched on-chain by every validator, the LLM verified it, and the median written was the verified value. No fallback to the caller's number exists in the code path. |
+| Value bound to its oracle | `resolve` returned a `verified` array where each entry carries its own oracle; outlier detection reads each entry's own value. |
+| Custody lifecycle | `request_withdraw` moved `pending_withdraw` to 1000000000000000000 and advanced `withdraw_nonce` to 1. `claim_withdraw(1)` settled it. A **replayed** `claim_withdraw(1)` was refused, paying nothing. |
+| Disposal of slashed value | `dispose_slashed` was **refused** for an oracle with an empty `slashed_pool`, confirming burned stake is only disposable out of the pool and is never recycled into stake. |
+
+Full consensus result from the live run:
+
+```json
+{"request_id": "e2e-1791027413733", "exists": true, "status": "RESOLVED",
+ "result": 88, "reports_count": 3, "resolved_at": 1791027452}
+```
+
+The question asked was "How many keys does a standard piano have?", all three
+oracles reported 88 against `https://en.wikipedia.org/wiki/Piano`, and the
+contract independently fetched that page, verified it with the LLM, and stored
+88.
+
+### A real bug this found
+
+`resolve()` had **never** worked on-chain. GenLayer's calldata encoder has no
+float type, so returning a float from the consensus leader function aborted the
+round:
+
+```
+TypeError: not calldata encodable 88.0: float   (key 'median')
+```
+
+Every validator voted `disagree` and the request stayed `PENDING`. The 33 local
+tests passed because gltest's stubs do not enforce the encoding restriction.
+
+Fixed by emitting every numeric value crossing the leader/validator boundary as
+an integer. Outlier detection still runs on full float precision before the
+conversion. `tests/direct/test_no_floats_in_consensus.py` is the regression
+test: it fails 3/3 with the bug reintroduced and passes with the fix. Suite is
+now **36 passed**.
+
+Anyone reproducing this should be aware of two tooling traps that cost real time
+and are worth stating plainly:
+
+1. `genlayer deploy` submits transactions with an **empty payload**, which
+   finalize as type-0 calls and silently create no contract. Use the GenLayer JS
+   SDK (`deployContract({ code })`, source bytes) — see `frontend/deploy-oracle.mjs`.
+2. A finalized transaction with status 5 does **not** mean the contract method
+   ran. A transaction that falls through to `__receive__` also finalizes as 5.
+   Read `consensus_data.execution_result` from the explorer to know what
+   actually happened.
