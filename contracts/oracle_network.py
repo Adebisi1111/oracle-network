@@ -429,6 +429,32 @@ class OracleNetwork(gl.Contract):
     # ------------------------------------------------------------------
 
     @gl.public.write
+    def deactivate(self) -> None:
+        """Voluntarily stop oracleing, so all remaining stake can leave.
+
+        Without this an oracle could never withdraw its way out: the
+        minimum-stake floor applies while active, and the only other way to
+        become inactive was being slashed. Deactivation is one-way and
+        irreversible - there is no re-activation, so a deactivated address can
+        never return to the oracle set and cannot re-qualify with the stake it
+        withdrew. It may still be slashed back into a pool if it somehow held
+        outstanding reports, but it can never report again.
+        """
+        sender = str(gl.message.sender_address)
+        rec = self.oracles.get(sender, None)
+        if rec is None:
+            raise gl.vm.UserError("Oracle not registered")
+        if not rec.active:
+            raise gl.vm.UserError("Oracle already deactivated")
+        # Any unreserved reports this oracle still owes the network must be
+        # settled before it leaves, otherwise its stake would be counted toward
+        # a threshold it can no longer help meet.
+        if int(rec.pending_withdraw) > 0:
+            raise gl.vm.UserError("Settle the pending withdrawal before deactivating")
+        rec.active = False
+        self.oracles[sender] = rec
+
+    @gl.public.write
     def request_withdraw(self, amount: int) -> int:
         """Phase 1 — reserve an amount of the caller's stake for withdrawal.
 
@@ -457,8 +483,12 @@ class OracleNetwork(gl.Contract):
         available = int(rec.staked) - int(rec.pending_withdraw)
         if amt > available:
             raise gl.vm.UserError(f"Amount exceeds available stake ({available} wei)")
-        if int(rec.staked) - amt < int(self.min_stake):
-            raise gl.vm.UserError("Cannot withdraw below the minimum stake")
+        # The minimum-stake floor is a property of being ACTIVE: an active
+        # oracle must keep its security up. An oracle that has deactivated - or
+        # was slashed into inactivity - is no longer counted toward consensus,
+        # so locking its stake above min_stake would strand value permanently.
+        if rec.active and int(rec.staked) - amt < int(self.min_stake):
+            raise gl.vm.UserError("Cannot withdraw below the minimum stake while active")
 
         rec.pending_withdraw = u256(amt)
         rec.withdraw_nonce += u256(1)

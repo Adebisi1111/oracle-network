@@ -5,17 +5,17 @@ data feeds. Multiple oracles report values for a data request; a single
 AI consensus round determines the truthful value and slashes outliers.
 
 ```
-Contract address (Studio Net): 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D
+Contract address (Studio Net): 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D
 Deploy tx: 0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
-Explorer: https://explorer-studio.genlayer.com/address/0x284FC1437e2335B18c9a4D5c072224ca3dB0125D
+Explorer: https://explorer-studio.genlayer.com/address/0x65b8d9A035a008f9774eEC2bDF523B15f26c329D
 ```
 
 > **Deployed source matches this repository exactly.** Verified after deploy:
-> both are 596 lines with SHA-256 `dbc07c6c8501c9198e5832e4…`. Reproduce it with:
+> both are 626 lines with SHA-256 `ce6648783b9da6cf0bc8314b…`. Reproduce it with:
 >
 > ```bash
 > genlayer network set studionet
-> genlayer code 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D > deployed.py
+> genlayer code 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D > deployed.py
 > diff deployed.py contracts/oracle_network.py   # no output
 > ```
 >
@@ -102,10 +102,17 @@ Run AI consensus to determine the truthful value. Requires at least
 std_dev, outliers, values, the verified `{oracle, value}` pairs, and the list
 of oracles excluded for unverifiable sources.
 
+**`deactivate()`** — `@gl.public.write`
+Voluntary one-way exit. Marks the oracle inactive so it can no longer report and
+may withdraw its **entire** remaining stake. Irreversible: there is no
+`activate()`, so a departed address can never return to the oracle set or
+re-qualify with withdrawn stake. Rejected while a withdrawal is pending.
+
 **`request_withdraw(amount)`** — `@gl.public.write`
 Phase 1 of withdrawal. Reserves `amount` of the caller's stake and returns a
-nonce. Cannot reserve below the minimum stake, and only one reservation may be
-pending at a time.
+nonce. Only one reservation may be pending at a time. An **active** oracle
+cannot reserve below the minimum stake; once deactivated (or slashed into
+inactivity) the floor no longer applies, so nothing is stranded.
 
 **`claim_withdraw(nonce)`** — `@gl.public.write`
 Phase 2. Settles the reservation exactly once. A stale nonce, or a second call
@@ -144,7 +151,7 @@ These are the properties the contract guarantees. Each has tests in
 | 3 | **Source policy** | A report's source must appear in the request's accepted `sources` list, so the committee only ever fetches evidence the requester approved. |
 | 4 | **Verified values are validated** | A report is excluded unless the AI returns `supported: true` **and** a numeric, finite `verified_value`. There is no fallback to the caller's claimed number. |
 | 5 | **Verified value stays bound to its oracle** | Consensus accumulates `{oracle, value, reported}` records and judges outliers from each record's own value. There is no positional `zip()` against the report list, so a dropped fetch cannot shift the slash target onto an innocent oracle. |
-| 6 | **Custody lifecycle** | Two-phase `request_withdraw()` → `claim_withdraw(nonce)` with a monotonic nonce. The reservation is zeroed before settlement, so a replay pays out once. `dispose_slashed()` moves burned stake to a network sink and never credits it back. |
+| 6 | **Custody lifecycle** | `deactivate()` provides a voluntary one-way exit; after it, the full remaining stake can be withdrawn. | Two-phase `request_withdraw()` → `claim_withdraw(nonce)` with a monotonic nonce. The reservation is zeroed before settlement, so a replay pays out once. `dispose_slashed()` moves burned stake to a network sink and never credits it back. |
 
 **On #6 — what "custody lifecycle" can mean on this runtime.** Every safety
 property the steward asked for is enforced on-chain and tested: replay

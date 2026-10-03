@@ -91,18 +91,18 @@ operational.
 The corrected source is live on Studio Net (chain 61999):
 
 ```
-Contract address: 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D
+Contract address: 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D
 Deploy tx:        0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
-Explorer:         https://explorer-studio.genlayer.com/address/0x284FC1437e2335B18c9a4D5c072224ca3dB0125D
+Explorer:         https://explorer-studio.genlayer.com/address/0x65b8d9A035a008f9774eEC2bDF523B15f26c329D
 ```
 
 Verified by retrieving the deployed source from the chain and comparing it to
-the file in this repository — both are 596 lines with SHA-256
-`dbc07c6c8501c9198e5832e4…`, i.e. byte-identical:
+the file in this repository — both are 626 lines with SHA-256
+`ce6648783b9da6cf0bc8314b…`, i.e. byte-identical:
 
 ```bash
 genlayer network set studionet
-genlayer code 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D > deployed.py
+genlayer code 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D > deployed.py
 diff deployed.py contracts/oracle_network.py   # no output
 ```
 
@@ -130,7 +130,7 @@ The invariants above are not only tested — they were exercised through real
 consensus transactions against the deployed contract.
 
 ```
-Contract: 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D   (Studio Net, 61999)
+Contract: 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D   (Studio Net, 61999)
 Harness:  frontend/e2e-oracle.mjs
 ```
 
@@ -247,3 +247,83 @@ LLM extracted 88 from both piano pages, leaving zero spread and therefore no
 outlier. That is the contract behaving correctly, not a failure — but it means
 slashing cannot be demonstrated with a single question against a single source,
 which is why this scenario uses two genuinely different sources.
+
+## Closing the remaining gaps
+
+A second pass over the request found three items that were implemented and
+locally tested but not fully demonstrated. All three are now closed.
+
+### 1. "withdrawing remaining stake" needed a real exit path
+
+The minimum-stake floor is correct while an oracle is **active** — it stops an
+oracle withdrawing its way out of the security requirement while still counting
+toward consensus. But the floor was applied unconditionally, and the only way to
+become inactive was to be slashed. That left two real problems:
+
+- an oracle that simply wanted to stop could never withdraw below `min_stake`
+- a **slashed** oracle's remaining stake was stranded above the floor forever
+
+Added `deactivate()`: a one-way, irreversible exit. There is deliberately no
+`activate()`, so a departed address cannot return to the oracle set or
+re-qualify with the stake it withdrew. It is refused while a withdrawal is
+pending, so stake can never be reserved against an oracle that has left. Once
+inactive the `min_stake` floor no longer applies, which also un-strands slashed
+stake.
+
+`tests/direct/test_deactivate_exit.py` — 9 tests. Three of them fail if the
+floor is made unconditional again.
+
+### 2. "one address cannot reach the threshold through overwrites" — proven live
+
+One oracle posted **five** reports on the same request: one accepted, four
+overwrite attempts refused.
+
+```
+get_request -> {"reports_count": 1, "status": "PENDING"}
+```
+
+`reports_count` stayed at 1, and `resolve` was then **refused** for insufficient
+distinct reports — one address cannot manufacture the threshold. The request
+stayed `PENDING`.
+
+### 3. "fetch failures cannot shift the slash target" — proven live
+
+This is the clause that needed a dropped report *and* a genuine outlier in the
+same round, which the earlier runs never had.
+
+Four oracles reported on one request: two cited a piano (88 keys), one cited a
+deck of cards (52), and one cited a host that does not resolve — so its report
+drops out of verification and the remaining three are still judged.
+
+```
+resolve -> {"status":"RESOLVED","result":88}
+
+a -> {"slashed_count":0,"slashed_pool":0}          <- honest, survived
+b -> {"slashed_count":0,"slashed_pool":0}          <- honest, survived
+c -> {"staked":2700000000000000000,"slashed_count":1,
+      "total_slashed":300000000000000000,
+      "slashed_pool":300000000000000000}           <- the real outlier
+```
+
+The fetch failure did not move the slash target onto a bystander. Had the old
+positional `zip()` been in place, the dropped report would have shifted the
+pairing and an honest oracle would have been slashed for another's value.
+
+### 4. Full voluntary exit, live
+
+```
+a before -> staked 3000000000000000000, active true
+  active oracle withdraw ALL stake   -> refused (minimum-stake floor)
+  deactivate()                       -> active false
+  report() after deactivating        -> refused
+  request_withdraw(all remaining)    -> accepted
+  claim_withdraw(nonce)              -> settled
+  claim_withdraw(same nonce)         -> refused (no double payout)
+
+a after exit -> {"staked":0,"active":false,"withdraw_nonce":1}
+settled_withdrawals -> 3000000000000000000
+```
+
+Nothing is stranded: the oracle left with everything it put in.
+
+**Suite: 61 passed.** `genvm-lint` clean.
