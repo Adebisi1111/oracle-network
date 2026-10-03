@@ -14,6 +14,12 @@ const clients = Object.fromEntries(
   Object.entries(KEYS).map(([k, pk]) => [k, createClient({ chain: studionet, account: createAccount(pk) })]),
 );
 
+// Oracle addresses come from the signing accounts. Never hardcode one: a
+// hardcoded address silently makes the proof read someone else's record.
+const ORACLE = Object.fromEntries(
+  Object.entries(KEYS).map(([k, pk]) => [k, createAccount(pk).address]),
+);
+
 const log = (...a) => console.log(...a);
 let pass = 0, fail = 0;
 function check(name, cond, detail = '') {
@@ -63,7 +69,7 @@ async function main() {
     write(clients.o1, 'register', [], { value: GEN / 10n }));
   const r1 = await write(clients.o1, 'register', [], { value: 3n * GEN });
   check('register with 3 GEN succeeds', r1.ok, `status ${r1.status}`);
-  const o1 = await read(clients.o1, 'get_oracle', ['0x61fd0047595A30A067f1F21F3b28C4AE8A8e3Dc3']);
+  const o1 = await read(clients.o1, 'get_oracle', [ORACLE.o1]);
   log(`  get_oracle -> ${JSON.stringify(o1).slice(0, 160)}`);
 
   for (const [k] of [['o2'], ['o3']]) {
@@ -105,7 +111,7 @@ async function main() {
   log(`  get_request after resolve -> ${JSON.stringify(req2).slice(0, 320)}`);
 
   log('\n=== INVARIANTS 5 + 6: custody lifecycle, replay resistance ===');
-  const O1 = '0x61fd0047595A30A067f1F21F3b28C4AE8A8e3Dc3';
+  const O1 = ORACLE.o1;
   const before = await read(clients.o1, 'get_pending_withdraw', [O1]);
   log(`  pending before -> ${JSON.stringify(before)}`);
 

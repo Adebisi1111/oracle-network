@@ -20,9 +20,9 @@ const clients = {
 ),
 };
 const ADDR = {
-  a: '0x61fd0047595A30A067f1F21F3b28C4AE8A8e3Dc3',
-  b: process.env.A2,
-  c: process.env.A3,
+  a: createAccount(process.env.K1).address,
+  b: createAccount(process.env.K2).address,
+  c: createAccount(process.env.K3).address,
 };
 const GEN = 10n ** 18n;
 const PIANO = 'https://en.wikipedia.org/wiki/Piano';            // 88 keys

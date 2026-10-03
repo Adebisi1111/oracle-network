@@ -91,9 +91,9 @@ operational.
 The corrected source is live on Studio Net (chain 61999):
 
 ```
-Contract address: 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D
+Contract address: 0x5ddE1c5c44C91Fe6FB12cc5433FE4cE5B7d9Ca13
 Deploy tx:        0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
-Explorer:         https://explorer-studio.genlayer.com/address/0x65b8d9A035a008f9774eEC2bDF523B15f26c329D
+Explorer:         https://explorer-studio.genlayer.com/address/0x5ddE1c5c44C91Fe6FB12cc5433FE4cE5B7d9Ca13
 ```
 
 Verified by retrieving the deployed source from the chain and comparing it to
@@ -102,7 +102,7 @@ the file in this repository — both are 626 lines with SHA-256
 
 ```bash
 genlayer network set studionet
-genlayer code 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D > deployed.py
+genlayer code 0x5ddE1c5c44C91Fe6FB12cc5433FE4cE5B7d9Ca13 > deployed.py
 diff deployed.py contracts/oracle_network.py   # no output
 ```
 
@@ -130,7 +130,7 @@ The invariants above are not only tested — they were exercised through real
 consensus transactions against the deployed contract.
 
 ```
-Contract: 0x65b8d9A035a008f9774eEC2bDF523B15f26c329D   (Studio Net, 61999)
+Contract: 0x5ddE1c5c44C91Fe6FB12cc5433FE4cE5B7d9Ca13   (Studio Net, 61999)
 Harness:  frontend/e2e-oracle.mjs
 ```
 

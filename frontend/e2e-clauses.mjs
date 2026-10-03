@@ -12,11 +12,16 @@ import { createClient, createAccount } from 'genlayer-js';
 import { studionet } from 'genlayer-js/chains';
 
 const C = process.env.ON_ADDR;
-const ADDR = { a: process.env.A1, b: process.env.A2, c: process.env.A3 };
+// derive from the signing accounts so a proof can never read the wrong record
+const ADDR = { a: createAccount(process.env.K1).address,
+               b: createAccount(process.env.K2).address,
+               c: createAccount(process.env.K3).address,
+               d: createAccount(process.env.K4).address };
 const cli = {
   a: createClient({ chain: studionet, account: createAccount(process.env.K1) }),
   b: createClient({ chain: studionet, account: createAccount(process.env.K2) }),
   c: createClient({ chain: studionet, account: createAccount(process.env.K3) }),
+  d: createClient({ chain: studionet, account: createAccount(process.env.K4) }),
 };
 const GEN = 10n ** 18n;
 const PIANO = 'https://en.wikipedia.org/wiki/Piano';
@@ -43,7 +48,7 @@ const read = (k, fn, args) => cli[k].readContract({ address: C, functionName: fn
 const j = async (k, fn, args) => JSON.parse(await read(k, fn, args));
 
 async function main() {
-  for (const k of ['a', 'b', 'c']) {
+  for (const k of ['a', 'b', 'c', 'd']) {
     const r = await write(k, 'register', [], { value: 3n * GEN });
     check(`register ${k}`, r.ok, `exec=${r.exec}`);
   }
@@ -83,8 +88,9 @@ async function main() {
   check('b reports 88 (piano, verified)', rb.ok, `exec=${rb.exec}`);
   const rc = await write('c', 'report', [RID2, 52n, CARDS]);
   check('c reports 52 (cards, verified -> the outlier)', rc.ok, `exec=${rc.exec}`);
-  const rd = await write('b', 'report', [RID2, 777777n, DEAD]);
-  check('d-style report from an unreachable source accepted into the request', rd.ok, `exec=${rd.exec}`);
+  const rd = await write('d', 'report', [RID2, 777777n, DEAD]);
+  check('report citing an unreachable source IS accepted at submit time', rd.ok, `exec=${rd.exec}`);
+  check('  ...and comes from a 4th, distinct oracle', true);
 
   const req2 = await j('a', 'get_request', [RID2]);
   check('reports_count = 4 distinct oracles', req2.reports_count === 4, String(req2.reports_count));
@@ -108,7 +114,18 @@ async function main() {
   check('honest oracle b NOT slashed', ob.slashed_count === 0, `slashed_count=${ob.slashed_count}`);
 
   // ---------------------------------------------------------------
-  console.log('\n=== CLAUSE: withdrawing REMAINING stake (voluntary exit) ===');
+  const sinkBefore = await j('c', 'get_pending_withdraw', [ADDR.c]);
+  const disp = await write('c', 'dispose_slashed', []);
+  check('dispose_slashed succeeds on a real slashed pool', disp.ok, `exec=${disp.exec}`);
+  const sinkAfter = await j('c', 'get_pending_withdraw', [ADDR.c]);
+  console.log(`  sink -> before ${sinkBefore.slashed_pool}, after ${sinkAfter.slashed_pool}`);
+  check('slashed pool moved to the network sink',
+    sinkBefore.slashed_pool > 0 && sinkAfter.slashed_pool === 0,
+    `${sinkBefore.slashed_pool} -> ${sinkAfter.slashed_pool}`);
+  const disp2 = await write('c', 'dispose_slashed', []);
+  check('second dispose_slashed refused (nothing left to dispose)', disp2.exec !== 'SUCCESS', `exec=${disp2.exec}`);
+
+  console.log(`\n=== CLAUSE: withdrawing REMAINING stake (voluntary exit) ===`);
   const before = await j('a', 'get_oracle', [ADDR.a]);
   console.log(`  a before -> staked ${before.staked}, active ${before.active}`);
 
