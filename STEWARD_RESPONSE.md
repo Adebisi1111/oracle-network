@@ -91,18 +91,18 @@ operational.
 The corrected source is live on Studio Net (chain 61999):
 
 ```
-Contract address: 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A
+Contract address: 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D
 Deploy tx:        0x15bcfbd620492b0af6f03a642f0696175e5bee4ddd41c9cd4cccc0c2b811709c
-Explorer:         https://explorer-studio.genlayer.com/address/0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A
+Explorer:         https://explorer-studio.genlayer.com/address/0x284FC1437e2335B18c9a4D5c072224ca3dB0125D
 ```
 
 Verified by retrieving the deployed source from the chain and comparing it to
-the file in this repository — both are 595 lines with SHA-256
-`27a05aa3cdc755083b1733bf…`, i.e. byte-identical:
+the file in this repository — both are 596 lines with SHA-256
+`dbc07c6c8501c9198e5832e4…`, i.e. byte-identical:
 
 ```bash
 genlayer network set studionet
-genlayer code 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A > deployed.py
+genlayer code 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D > deployed.py
 diff deployed.py contracts/oracle_network.py   # no output
 ```
 
@@ -130,7 +130,7 @@ The invariants above are not only tested — they were exercised through real
 consensus transactions against the deployed contract.
 
 ```
-Contract: 0x4fF65D88Fa4bc2f906F58E9e36e2155B1274af4A   (Studio Net, 61999)
+Contract: 0x284FC1437e2335B18c9a4D5c072224ca3dB0125D   (Studio Net, 61999)
 Harness:  frontend/e2e-oracle.mjs
 ```
 
@@ -189,3 +189,61 @@ and are worth stating plainly:
    ran. A transaction that falls through to `__receive__` also finalizes as 5.
    Read `consensus_data.execution_result` from the explorer to know what
    actually happened.
+
+## Slashing and disposal, proven live
+
+`frontend/e2e-slash.mjs` drives the one scenario the rest of the suite cannot
+reach: disposal exists only for slashed stake, and slashing only happens when
+*verified* values disagree. A single agreed source can never produce an outlier.
+
+Two oracles cited a standard piano (88 keys); a third cited a deck of cards (52).
+Consensus: median 88, std 16.97, threshold 2.0, so |52 − 88| = 36 > 33.9 and the
+cards oracle was the outlier.
+
+```
+cards oracle -> {"staked":2700000000000000000,"slashed_count":1,
+                 "total_slashed":300000000000000000,
+                 "slashed_pool":300000000000000000,"active":true}
+honest oracle -> {"staked":3000000000000000000,"slashed_count":0,
+                 "total_slashed":0,"slashed_pool":0,"active":true}
+```
+
+Ten percent of stake burned, moved into `slashed_pool`, never returned to
+`staked`. Both honest oracles were untouched — which is the point of binding each
+verified value to its own oracle: the outlier judged is the one whose *own*
+verified value diverged, not a bystander shifted by a dropped report.
+
+Disposal then moved the pool to the network sink, exactly once:
+
+```
+before -> {"slashed_pool":300000000000000000, "slashed_sink":0}
+after  -> {"slashed_pool":0,                "slashed_sink":300000000000000000}
+```
+
+A second `dispose_slashed()` was refused. Burned stake cannot be recycled to
+re-qualify as an oracle. **`get_pending_withdraw` now also returns
+`slashed_sink`** so this is observable on-chain rather than only in the receipt.
+
+**18 passed, 0 failed.**
+
+## Test coverage added for this round
+
+The two locally-tested gaps are now closed with tests that were verified by
+reintroducing the defect they target:
+
+| File | Covers | Fails when defect is reintroduced |
+|---|---|---|
+| `tests/direct/test_value_oracle_binding.py` | Oracle↔value binding survives a dropped report; only the genuine outlier is slashed; the unfetchable reporter can never be a slash target | 3 of 3 fail with `zip()` restored |
+| `tests/direct/test_invalid_verified_values.py` | bool, NaN, ±Infinity, list, dict, string, null and truthy-but-not-true `supported` flags are all rejected; a valid value still resolves | 5 fail with the validation guards removed |
+
+`test_outlier_alignment_bug.py` was a standalone script that modelled the *old*
+buggy `zip()` logic and contained no pytest tests at all; it has been superseded
+by `test_value_oracle_binding.py`, which exercises the real contract.
+
+**Suite: 52 passed.**
+
+Note on the previous run: the grand-piano oracle was *not* slashed because the
+LLM extracted 88 from both piano pages, leaving zero spread and therefore no
+outlier. That is the contract behaving correctly, not a failure — but it means
+slashing cannot be demonstrated with a single question against a single source,
+which is why this scenario uses two genuinely different sources.

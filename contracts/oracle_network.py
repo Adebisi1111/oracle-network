@@ -504,6 +504,7 @@ class OracleNetwork(gl.Contract):
             "withdraw_nonce": int(rec.withdraw_nonce),
             "slashed_pool": int(rec.slashed_pool),
             "settled_withdrawals": int(self.settled_withdrawals),
+            "slashed_sink": int(self.slashed_sink),
         })
 
     @gl.public.write
