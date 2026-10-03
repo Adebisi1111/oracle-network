@@ -10,6 +10,21 @@ Deploy tx: 0x7c5cc242bf62748b6d87fe97be700d4c4a1b740aa7acad36b5b4947838a43a22
 Explorer: https://explorer-studio.genlayer.com/address/0x5770887cE7A8f0620CE11042bb81317Ec302A206
 ```
 
+> **Deployed vs. source.** The address above hosts an *earlier* revision. The
+> source in this repo enforces invariants that the deployed build does not — most
+> importantly it fetches and verifies each report's source on-chain instead of
+> computing a median over caller-supplied numbers. To confirm what is actually
+> deployed versus what is in the repo:
+>
+> ```bash
+> genlayer network set studionet
+> genlayer code 0x5770887cE7A8f0620CE11042bb81317Ec302A206 > deployed.py
+> diff deployed.py contracts/oracle_network.py
+> ```
+>
+> Redeploying is required before the invariants below can be said to hold
+> on-chain.
+
 ## What it does
 
 An oracle stakes GEN to join the network. A requester posts a data
@@ -44,12 +59,17 @@ and unrepeatable. OracleNetwork instead:
 
 Single `gl.vm.run_nondet_unsafe` call, two-phase:
 
-1. **leader_fn**: collect all reported values, compute median, identify
-   outliers (values beyond `outlier_threshold` standard deviations from
-   median), return slash list.
-2. **validator_fn**: recompute median independently. If leader and
-   validator disagree on median or outlier list → disagree → leader
-   rotates.
+1. **leader_fn**: for every report, fetch its source **on-chain** with
+   `gl.nondet.web.render`, ask the AI to verify the value against the fetched
+   content, and keep only reports that return `supported: true` with a numeric
+   `verified_value`. Then compute the median and flag outliers beyond
+   `outlier_threshold` standard deviations.
+2. **validator_fn**: repeat the whole thing independently. It must match on the
+   median, the outlier list, **and the oracle→value pairing**. Any mismatch
+   means no majority and the leader rotates.
+
+Unverifiable reports are dropped rather than trusted, and each surviving value
+stays attached to the oracle that produced it.
 
 **Outlier detection:**
 - Values beyond `outlier_threshold` × σ from median → outlier
@@ -60,9 +80,10 @@ Single `gl.vm.run_nondet_unsafe` call, two-phase:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `min_stake_wei` | 1e18 (1 GEN) | Minimum stake to register |
+| `min_stake` | 1e18 (1 GEN) | Minimum stake to register *and* to remain active |
 | `slash_percent` | 10 | Fraction of stake burned on outlier |
-| `outlier_threshold` | 2.0 | Std devs for outlier detection |
+| `outlier_threshold` | 200 (÷100 = 2.0) | Std devs for outlier detection — now actually read by consensus |
+| `min_reports_required` | 3 | Distinct reporting oracles needed to resolve |
 
 ## API
 
@@ -78,8 +99,23 @@ Requester posts a data request. Requires at least one source.
 Oracle reports a value for a request. Requires registered active oracle.
 
 **`resolve(request_id)`** — `@gl.public.write`
-Run AI consensus to determine the truthful value. Requires ≥3 reports.
-Returns median, std_dev, outliers, values.
+Run AI consensus to determine the truthful value. Requires at least
+`min_reports_required` **distinct** reporting oracles. Returns median,
+std_dev, outliers, values, the verified `{oracle, value}` pairs, and the list
+of oracles excluded for unverifiable sources.
+
+**`request_withdraw(amount)`** — `@gl.public.write`
+Phase 1 of withdrawal. Reserves `amount` of the caller's stake and returns a
+nonce. Cannot reserve below the minimum stake, and only one reservation may be
+pending at a time.
+
+**`claim_withdraw(nonce)`** — `@gl.public.write`
+Phase 2. Settles the reservation exactly once. A stale nonce, or a second call
+with no reservation pending, is rejected.
+
+**`dispose_slashed()`** — `@gl.public.write`
+Moves the caller's slashed stake into the network sink. Slashed value is never
+silently returned to stake.
 
 ### View methods
 
@@ -92,8 +128,33 @@ Get a request's details: requester, query, status, result, reports count.
 **`get_report(request_id, oracle)`** → JSON
 Get a specific oracle's report for a request.
 
+**`get_pending_withdraw(oracle)`** → JSON
+Pending withdrawal, nonce, slashed pool and total settled.
+
 **`now()`** → string
 Current transaction timestamp in Unix seconds.
+
+## Enforced invariants
+
+These are the properties the contract guarantees. Each has tests in
+`tests/direct/test_invariants.py` that fail against the previous revision.
+
+| # | Invariant | How it is enforced |
+|---|---|---|
+| 1 | **Minimum stake before activation** | `register()` rejects any registration whose resulting stake is below `min_stake`, so a dust stake cannot become an active oracle. |
+| 2 | **Unique oracle reports** | `report()` refuses a second report from the same address on the same request, and `reports_count` increments only when a new report row is created. The resolution threshold therefore counts *distinct* oracles. |
+| 3 | **Source policy** | A report's source must appear in the request's accepted `sources` list, so the committee only ever fetches evidence the requester approved. |
+| 4 | **Verified values are validated** | A report is excluded unless the AI returns `supported: true` **and** a numeric, finite `verified_value`. There is no fallback to the caller's claimed number. |
+| 5 | **Verified value stays bound to its oracle** | Consensus accumulates `{oracle, value, reported}` records and judges outliers from each record's own value. There is no positional `zip()` against the report list, so a dropped fetch cannot shift the slash target onto an innocent oracle. |
+| 6 | **Custody lifecycle** | Two-phase `request_withdraw()` → `claim_withdraw(nonce)` with a monotonic nonce. The reservation is zeroed before settlement, so a replay pays out once. `dispose_slashed()` moves burned stake to a network sink and never credits it back. |
+
+**On #6 — a stated limitation.** This runtime exposes no outbound value
+primitive on the contract base class: there is no `gl.pay()`, and
+`emit_transfer` lives on `ContractProxy` rather than `Contract`. The lifecycle
+is therefore enforced as *accounting* — `settled_withdrawals` and `slashed_sink`
+record what is owed and must be disbursed off-contract by the operator. The
+replay-resistance and below-minimum guarantees are real and on-chain; the
+actual transfer is not something the contract can perform here.
 
 ## Testing
 
@@ -101,6 +162,10 @@ Current transaction timestamp in Unix seconds.
 export PYTHONPATH="$HOME/.local/lib/python3.14/site-packages/genlayer_py/client:$PYTHONPATH"
 python3.14 -m pytest tests/direct/ -v
 ```
+
+33 tests pass. `tests/direct/test_invariants.py` is the regression suite for the
+steward's requirements: reverting `contracts/oracle_network.py` to the previous
+revision fails 14 of them.
 
 ## Linting
 
@@ -123,13 +188,15 @@ echo "your_password" | genlayer deploy \
 ```
 oracle-network/
 ├── contracts/
-│   └── oracle_network.py      # The intelligent contract (280 lines)
+│   └── oracle_network.py          # The intelligent contract
 ├── tests/
 │   └── direct/
-│       ├── conftest.py        # Shared test helpers
-│       ├── test_register.py   # Oracle registration + stake tests
-│       ├── test_jobs.py       # Request lifecycle + reporting tests
-│       └── test_verify.py     # Consensus + slashing tests
+│       ├── conftest.py            # Shared test helpers
+│       ├── test_register.py       # Oracle registration + stake tests
+│       ├── test_jobs.py           # Request lifecycle + reporting tests
+│       ├── test_verify.py         # Consensus + slashing tests
+│       ├── test_invariants.py     # The seven enforced invariants
+│       └── test_steward_invariants.py  # Pre-fix gap audit (runnable standalone)
 └── README.md
 ```
 

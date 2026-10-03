@@ -12,7 +12,7 @@ def test_post_request_stores_data(direct_vm, direct_deploy, direct_alice):
     contract.post_request(
         request_id="req1",
         query="What is the price of ETH?",
-        sources=["https://coingecko.com", "https://coinmarketcap.com"],
+        sources=["coingecko", "coinmarketcap"],
     )
 
     req = contract.get_request("req1")
@@ -32,14 +32,14 @@ def test_post_request_rejects_duplicate(direct_vm, direct_deploy, direct_alice):
     contract.post_request(
         request_id="req1",
         query="ETH price",
-        sources=["https://coingecko.com"],
+        sources=["coingecko"],
     )
 
     try:
         contract.post_request(
             request_id="req1",
             query="ETH price",
-            sources=["https://coingecko.com"],
+            sources=["coingecko"],
         )
     except Exception as e:
         msg = str(e)
@@ -80,7 +80,7 @@ def test_report_by_registered_oracle(direct_vm, direct_deploy, direct_alice):
     contract.post_request(
         request_id="req1",
         query="ETH price",
-        sources=["https://coingecko.com"],
+        sources=["coingecko"],
     )
 
     direct_vm.mock_web("coingecko", {"body": "ETH price data: $3500 per ETH"})
@@ -110,7 +110,7 @@ def test_report_rejects_unregistered(direct_vm, direct_deploy, direct_alice):
     contract.post_request(
         request_id="req1",
         query="ETH price",
-        sources=["https://coingecko.com"],
+        sources=["coingecko"],
     )
 
     try:
@@ -123,20 +123,21 @@ def test_report_rejects_unregistered(direct_vm, direct_deploy, direct_alice):
     assert "oracle" in msg.lower() and "registered" in msg.lower()
 
 
-def test_report_rejects_resolved_request(direct_vm, direct_deploy, direct_alice):
+def test_report_rejects_resolved_request(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
     contract = direct_deploy("contracts/oracle_network.py")
     alice = to_hex(direct_alice)
 
     # Use 10 GEN stake so oracle survives 10% slash
-    direct_vm.sender = direct_alice
-    direct_vm.value = 10000000000000000000
-    contract.register()
+    for oracle in (direct_alice, direct_bob, direct_charlie):
+        direct_vm.sender = oracle
+        direct_vm.value = 10000000000000000000
+        contract.register()
 
     direct_vm.sender = direct_alice
     contract.post_request(
         request_id="req1",
         query="ETH price",
-        sources=["https://coingecko.com"],
+        sources=["coingecko"],
     )
 
     direct_vm.mock_web("coingecko", {"body": "ETH price data: $3500 per ETH"})
@@ -145,12 +146,15 @@ def test_report_rejects_resolved_request(direct_vm, direct_deploy, direct_alice)
         json.dumps({"verified_value": 3500, "supported": True}),
     )
 
-    contract.report("req1", 3500, "coingecko")
-    contract.report("req1", 3501, "coingecko")
-    contract.report("req1", 3499, "coingecko")
+    # Three DISTINCT oracles: one address may no longer reach the threshold by
+    # calling report() three times.
+    for oracle in (direct_alice, direct_bob, direct_charlie):
+        direct_vm.sender = oracle
+        contract.report("req1", 3500, "coingecko")
     contract.resolve("req1")
 
     try:
+        direct_vm.sender = direct_alice
         contract.report("req1", 3600, "coingecko")
     except Exception as e:
         msg = str(e)
@@ -160,23 +164,30 @@ def test_report_rejects_resolved_request(direct_vm, direct_deploy, direct_alice)
     assert "already resolved" in msg.lower()
 
 
-def test_resolve_requires_min_reports(direct_vm, direct_deploy, direct_alice):
+def test_resolve_requires_min_reports(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = direct_deploy("contracts/oracle_network.py")
     alice = to_hex(direct_alice)
 
-    direct_vm.sender = direct_alice
-    direct_vm.value = 1000000000000000000
-    contract.register()
+    for oracle in (direct_alice, direct_bob):
+        direct_vm.sender = oracle
+        direct_vm.value = 1000000000000000000
+        contract.register()
 
     direct_vm.sender = direct_alice
     contract.post_request(
         request_id="req1",
         query="ETH price",
-        sources=["https://coingecko.com"],
+        sources=["coingecko"],
     )
 
+    # Two DISTINCT oracles: still below the threshold of 3. A second report from
+    # alice would now be rejected outright rather than inflating the count.
     contract.report("req1", 3500, "coingecko")
+    direct_vm.sender = direct_bob
     contract.report("req1", 3501, "coingecko")
+
+    req = json.loads(contract.get_request("req1"))
+    assert req["reports_count"] == 2
 
     try:
         contract.resolve("req1")
@@ -185,4 +196,4 @@ def test_resolve_requires_min_reports(direct_vm, direct_deploy, direct_alice):
     else:
         msg = None
     assert msg is not None
-    assert "3 reports" in msg.lower()
+    assert "distinct reports" in msg.lower()

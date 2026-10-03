@@ -22,7 +22,7 @@ def test_resolve_computes_median(direct_vm, direct_deploy, direct_alice, direct_
         contract.register()
 
     direct_vm.sender = direct_alice
-    contract.post_request(request_id="req1", query="ETH price", sources=["https://coingecko.com"])
+    contract.post_request(request_id="req1", query="ETH price", sources=["coingecko"])
 
     # 3 oracles, same source, same mock — all get verified_value=3500
     direct_vm.mock_web("coingecko", {"body": "ETH price data: $3500 per ETH"})
@@ -49,18 +49,22 @@ def test_resolve_computes_median(direct_vm, direct_deploy, direct_alice, direct_
     assert req_data["result"] == 3500
 
 
-def test_resolve_rejects_fewer_than_3_reports(direct_vm, direct_deploy, direct_alice):
+def test_resolve_rejects_fewer_than_3_reports(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = direct_deploy("contracts/oracle_network.py")
     alice = to_hex(direct_alice)
 
-    direct_vm.sender = direct_alice
-    direct_vm.value = 1000000000000000000
-    contract.register()
+    for oracle in (direct_alice, direct_bob):
+        direct_vm.sender = oracle
+        direct_vm.value = 1000000000000000000
+        contract.register()
 
     direct_vm.sender = direct_alice
-    contract.post_request(request_id="req1", query="ETH price", sources=["https://coingecko.com"])
+    contract.post_request(request_id="req1", query="ETH price", sources=["coingecko"])
 
+    # Two DISTINCT oracles, still below the threshold of three. The same oracle
+    # cannot contribute twice to inflate the count.
     contract.report("req1", 3500, "coingecko")
+    direct_vm.sender = direct_bob
     contract.report("req1", 3501, "coingecko")
 
     try:
@@ -70,7 +74,7 @@ def test_resolve_rejects_fewer_than_3_reports(direct_vm, direct_deploy, direct_a
     else:
         msg = None
     assert msg is not None, f"Expected resolve to fail, but it succeeded"
-    assert "3 reports" in msg.lower(), f"Expected '3 reports' in error, got: {msg}"
+    assert "distinct reports" in msg.lower(), f"Expected 'distinct reports' in error, got: {msg}"
 
 
 def test_get_report(direct_vm, direct_deploy, direct_alice):
@@ -82,7 +86,7 @@ def test_get_report(direct_vm, direct_deploy, direct_alice):
     contract.register()
 
     direct_vm.sender = direct_alice
-    contract.post_request(request_id="req1", query="ETH price", sources=["https://coingecko.com"])
+    contract.post_request(request_id="req1", query="ETH price", sources=["coingecko"])
 
     direct_vm.mock_web("coingecko", {"body": "ETH price: $3500"})
     direct_vm.mock_llm(
@@ -104,7 +108,7 @@ def test_unregistered_oracle_cannot_report(direct_vm, direct_deploy, direct_alic
     alice = to_hex(direct_alice)
 
     direct_vm.sender = direct_alice
-    contract.post_request(request_id="req1", query="ETH price", sources=["https://coingecko.com"])
+    contract.post_request(request_id="req1", query="ETH price", sources=["coingecko"])
 
     try:
         contract.report("req1", 3500, "coingecko")
@@ -126,7 +130,7 @@ def test_resolve_rejects_already_resolved(direct_vm, direct_deploy, direct_alice
         contract.register()
 
     direct_vm.sender = direct_alice
-    contract.post_request(request_id="req1", query="ETH price", sources=["https://coingecko.com"])
+    contract.post_request(request_id="req1", query="ETH price", sources=["coingecko"])
 
     for _ in range(3):
         direct_vm.mock_web("coingecko", {"body": "ETH price: $3500"})
